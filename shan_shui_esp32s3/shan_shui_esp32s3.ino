@@ -6,9 +6,10 @@
 #include "JingyeongEngine.h"
 
 // ============================================================================
-// Waveshare ESP32-S3-LCD-2 / ESP32-S3-Touch-LCD-2 Hardware Pin Configuration
+// Waveshare ESP32-S3-LCD-2 Hardware Pin Configuration
 // Display: 2.0" IPS 240x320 (ST7789T3, SPI) -> Used in Landscape 320x240
-// Touch:   CST816D (I2C: SDA=48, SCL=47, INT=46)
+// Hardware Button: BOOT button is on GPIO 0 (Active LOW with internal pullup)
+// Touch (optional/fallback): CST816D (I2C: SDA=48, SCL=47, INT=46)
 // ============================================================================
 #define LCD_SCLK 39
 #define LCD_MOSI 38
@@ -17,6 +18,8 @@
 #define LCD_CS   45
 #define LCD_RST  -1
 #define LCD_BL   1
+
+#define PIN_BOOT_BTN 0
 
 #define TP_SDA   48
 #define TP_SCL   47
@@ -353,15 +356,6 @@ void composeFrame(int localPxOffset) {
     }
 }
 
-// Display OSD banner when switching style or speed
-uint32_t bannerExpireMs = 0;
-const char* bannerText = nullptr;
-
-void showBanner(const char* txt, uint32_t dur = 1800) {
-    bannerText = txt;
-    bannerExpireMs = millis() + dur;
-}
-
 void resetLandscape(ArtStyle newStyle) {
     while (tileRenderBusy) delay(2);
     currentStyle = newStyle;
@@ -374,59 +368,44 @@ void resetLandscape(ArtStyle newStyle) {
     renderTileSync(1, 1);
     nextTileToRender = 2;
     tileRenderBusy = true;
-    showBanner(currentStyle == STYLE_SHAN_SHUI ? "[ Mode: Chinese Shan-Shui ]" : "[ Mode: Korean Jingyeong ]");
 }
 
-// --- Touch Input (CST816D) ---
-float scrollSpeedPx = 1.0f;
-bool paused = false;
-uint32_t lastTouchMs = 0;
+// Fixed smooth scroll speed without speed-cycling UI clutter
+const float scrollSpeedPx = 1.0f;
 
-void checkTouch() {
-    Wire.beginTransmission(CST816_ADDR);
-    Wire.write(0x02);
-    if (Wire.endTransmission(false) != 0) return;
-    if (Wire.requestFrom(CST816_ADDR, 5) == 5) {
-        uint8_t fingers = Wire.read();
-        uint8_t xh = Wire.read();
-        uint8_t xl = Wire.read();
-        uint8_t yh = Wire.read();
-        uint8_t yl = Wire.read();
-        if (fingers > 0 && (millis() - lastTouchMs > 400)) {
-            lastTouchMs = millis();
-            uint16_t rawX = ((xh & 0x0F) << 8) | xl;
-            uint16_t rawY = ((yh & 0x0F) << 8) | yl;
+// Hardware BOOT Button (GPIO 0) handling:
+// - Short press (< 800ms): Toggle Style (Chinese Shan-Shui <-> Korean Jingyeong)
+// - Long press (>= 800ms): Re-seed current landscape with new random seed
+bool lastBtnState = HIGH;
+uint32_t btnPressTime = 0;
 
-            // TOP-RIGHT CORNER (x > 220, y < 80): Toggle Style (Shan-Shui <-> Jingyeong)
-            if (rawX > 220 && rawY < 80) {
-                resetLandscape(currentStyle == STYLE_SHAN_SHUI ? STYLE_JINGYEONG : STYLE_SHAN_SHUI);
-            }
-            // TOP-LEFT CORNER (x < 80, y < 80): Reseed current style
-            else if (rawX < 80 && rawY < 80) {
+void checkButtons() {
+    bool currentBtn = digitalRead(PIN_BOOT_BTN);
+    
+    // Falling edge: button pressed
+    if (lastBtnState == HIGH && currentBtn == LOW) {
+        btnPressTime = millis();
+    }
+    // Rising edge: button released
+    else if (lastBtnState == LOW && currentBtn == HIGH) {
+        uint32_t duration = millis() - btnPressTime;
+        if (duration >= 50) { // Debounce threshold
+            if (duration >= 800) {
+                // Long press: Re-seed current style
                 resetLandscape(currentStyle);
-            }
-            // CENTER / OTHER: Cycle scroll speed
-            else {
-                if (paused) {
-                    paused = false;
-                    scrollSpeedPx = 1.0f;
-                    showBanner("Speed: 1.0x");
-                } else if (scrollSpeedPx < 1.5f) {
-                    scrollSpeedPx = 2.0f;
-                    showBanner("Speed: 2.0x");
-                } else if (scrollSpeedPx < 2.8f) {
-                    scrollSpeedPx = 3.5f;
-                    showBanner("Speed: 3.5x");
-                } else {
-                    paused = true;
-                    showBanner("|| Paused");
-                }
+            } else {
+                // Short click: Switch Art Style
+                resetLandscape(currentStyle == STYLE_SHAN_SHUI ? STYLE_JINGYEONG : STYLE_SHAN_SHUI);
             }
         }
     }
+    lastBtnState = currentBtn;
 }
 
 void setup() {
+    // Configure BOOT button as input with internal pullup
+    pinMode(PIN_BOOT_BTN, INPUT_PULLUP);
+
     gfx->begin();
     gfx->fillScreen(0xF75A);
 
@@ -438,7 +417,6 @@ void setup() {
     gfx->setCursor(55, 110);
     gfx->println("Shan-Shui & Jingyeong");
 
-    Wire.begin(TP_SDA, TP_SCL, 400000);
     items.reserve(128);
 
     for (int i = 0; i < 3; i++) {
@@ -464,17 +442,14 @@ void setup() {
     xTaskCreatePinnedToCore(core0RenderTask, "ShanShuiGen", 16384, NULL, 0, NULL, 0);
     nextTileToRender = 2;
     tileRenderBusy = true;
-    showBanner("[ Mode: Chinese Shan-Shui ]", 2500);
 }
 
 float scrollAccum = 0.0f;
 
 void loop() {
-    checkTouch();
+    checkButtons();
 
-    if (!paused) {
-        scrollAccum += scrollSpeedPx;
-    }
+    scrollAccum += scrollSpeedPx;
 
     int localPx = (int)scrollAccum;
     if (localPx >= SCREEN_W) {
@@ -494,25 +469,6 @@ void loop() {
 
     composeFrame(localPx);
 
-    // Overlay style/speed HUD banner if active
-    if (bannerText && millis() < bannerExpireMs) {
-        int by0 = 8, by1 = 28;
-        int bx0 = 15, bx1 = 305;
-        for (int y = by0; y <= by1; y++) {
-            for (int x = bx0; x <= bx1; x++) {
-                // Semi-transparent dark paper badge
-                uint16_t orig = frameBuf[y * SCREEN_W + x];
-                frameBuf[y * SCREEN_W + x] = Canvas565::blend565(orig, 245, 235, 215, 200);
-            }
-        }
-    }
-
+    // Direct, ultra-clean 60fps DMA push without ANY UI banner flicker!
     gfx->draw16bitRGBBitmap(0, 0, frameBuf, SCREEN_W, SCREEN_H);
-
-    if (bannerText && millis() < bannerExpireMs) {
-        gfx->setTextColor(0x18C3); // Deep ink
-        gfx->setTextSize(1);
-        gfx->setCursor(30, 14);
-        gfx->println(bannerText);
-    }
 }

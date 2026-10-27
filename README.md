@@ -21,9 +21,10 @@ Using **Antigravity + Gemini 4 Argon**, this project ports the procedural genera
    - **8MB Octal PSRAM Ring Buffer**: Maintains three `320×240` RGB565 landscape tiles (`tiles[0..2]`) in PSRAM plus an internal DMA-capable SRAM framebuffer (`frameBuf`).
    - **Core 0 (Generator Worker)**: Pre-renders the upcoming horizon tile (`tiles[2]`) in the background while yielding cleanly to the FreeRTOS idle watchdog.
    - **Core 1 (60 FPS Scroll Engine)**: Composes a sliding `320×240` viewport across `tiles[0]` and `tiles[1]` in `<0.2 ms` via `memcpy` and streams it over `FSPI` to the ST7789T3 display without any UI flickering.
-4. **Hardware Controls (BOOT Button / GPIO 0)**
-   - **Short Press (< 800ms)**: Toggle art styles instantly between Traditional Shan-Shui and Super Mario World.
-   - **Long Press (≥ 800ms)**: Re-seed the landscape with a new random seed.
+4. **Interactive Controls (Touch & Hardware BOOT Button)**
+   - **Tap Screen (CST816D)**: Instant **Pause / Resume** toggle without any flickering HUD overlay.
+   - **BOOT Button Short Press (< 800ms)**: Toggle art styles instantly between Traditional Shan-Shui and Super Mario World.
+   - **BOOT Button Long Press (≥ 800ms)**: Re-seed the landscape with a new random seed.
 
 ---
 
@@ -32,7 +33,8 @@ Using **Antigravity + Gemini 4 Argon**, this project ports the procedural genera
 * **Board**: [Waveshare ESP32-S3-LCD-2 / ESP32-S3-Touch-LCD-2](https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-2)
 * **MCU**: ESP32-S3 (Dual-Core Xtensa LX7 @ 240MHz, 8MB Octal PSRAM, 16MB Flash)
 * **Display**: 2.0" IPS LCD (`240×320`, ST7789T3 SPI driver, used in `320×240` landscape mode)
-* **Controls**: Physical BOOT button on `GPIO 0` (Short click: style switch / Long click: re-seed)
+* **Touch Controller**: CST816D Capacitive Touch (Tap anywhere to Pause / Resume)
+* **Hardware Button**: BOOT button on `GPIO 0` (Short click: style switch / Long click: re-seed)
 
 | Signal | ESP32-S3 GPIO | Description |
 | :--- | :--- | :--- |

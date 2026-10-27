@@ -20,6 +20,11 @@
 
 #define PIN_BOOT_BTN 0
 
+#define TP_SDA   48
+#define TP_SCL   47
+#define TP_INT   46
+#define CST816_ADDR 0x15
+
 Arduino_DataBus *bus = new Arduino_ESP32SPI(
     LCD_DC, LCD_CS, LCD_SCLK, LCD_MOSI, LCD_MISO, FSPI);
 
@@ -432,9 +437,15 @@ void composeFrame(int localPxOffset) {
     }
 }
 
+// 1.5px per frame gives a brisk, authentic Mario sidescroll feel!
+const float scrollSpeedPx = 1.5f;
+bool paused = false;
+uint32_t lastTouchMs = 0;
+
 void resetLandscape(ArtStyle newStyle) {
     while (tileRenderBusy) delay(2);
     currentStyle = newStyle;
+    paused = false; // Always resume scroll on style change or reseed
     currentSeed = (uint32_t)esp_random();
     engine.seedPRNG(currentSeed);
     items.clear();
@@ -446,8 +457,20 @@ void resetLandscape(ArtStyle newStyle) {
     tileRenderBusy = true;
 }
 
-// 1.5px per frame gives a brisk, authentic Mario sidescroll feel!
-const float scrollSpeedPx = 1.5f;
+// CST816D Touch: Tap anywhere on screen to Pause / Resume scrolling
+void checkTouch() {
+    Wire.beginTransmission(CST816_ADDR);
+    Wire.write(0x02);
+    if (Wire.endTransmission(false) != 0) return;
+    if (Wire.requestFrom(CST816_ADDR, 5) == 5) {
+        uint8_t fingers = Wire.read();
+        Wire.read(); Wire.read(); Wire.read(); Wire.read(); // xh, xl, yh, yl
+        if (fingers > 0 && (millis() - lastTouchMs > 350)) {
+            lastTouchMs = millis();
+            paused = !paused;
+        }
+    }
+}
 
 bool lastBtnState = HIGH;
 uint32_t btnPressTime = 0;
@@ -474,6 +497,7 @@ void checkButtons() {
 
 void setup() {
     pinMode(PIN_BOOT_BTN, INPUT_PULLUP);
+    Wire.begin(TP_SDA, TP_SCL, 400000);
 
     gfx->begin();
     gfx->fillScreen(0xF75A);
@@ -517,8 +541,11 @@ float scrollAccum = 0.0f;
 
 void loop() {
     checkButtons();
+    checkTouch();
 
-    scrollAccum += scrollSpeedPx;
+    if (!paused) {
+        scrollAccum += scrollSpeedPx;
+    }
 
     int localPx = (int)scrollAccum;
     if (localPx >= SCREEN_W) {

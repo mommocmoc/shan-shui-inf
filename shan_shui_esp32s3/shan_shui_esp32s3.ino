@@ -4,6 +4,7 @@
 #include "Canvas565.h"
 #include "ShanShuiEngine.h"
 #include "MarioWorldEngine.h"
+#include "PomodoroTimer.h"
 
 // ============================================================================
 // Waveshare ESP32-S3-LCD-2 Hardware Pin Configuration
@@ -437,15 +438,17 @@ void composeFrame(int localPxOffset) {
     }
 }
 
-// 1.5px per frame gives a brisk, authentic Mario sidescroll feel!
-const float scrollSpeedPx = 1.5f;
-bool paused = false;
+// ============================================================================
+// Pomodoro Focus Timer Instance
+// ============================================================================
+PomodoroTimer pomo;
 uint32_t lastTouchMs = 0;
 
 void resetLandscape(ArtStyle newStyle) {
     while (tileRenderBusy) delay(2);
     currentStyle = newStyle;
-    paused = false; // Always resume scroll on style change or reseed
+    // NOTE: pomo.state and pomo.elapsedMs are PRESERVED!
+    // Switching styles keeps the 20-minute timer running seamlessly!
     currentSeed = (uint32_t)esp_random();
     engine.seedPRNG(currentSeed);
     items.clear();
@@ -457,7 +460,7 @@ void resetLandscape(ArtStyle newStyle) {
     tileRenderBusy = true;
 }
 
-// CST816D Touch: Tap anywhere on screen to Pause / Resume scrolling
+// CST816D Touch: Tap anywhere on screen to Start / Pause / Resume / Next Session
 void checkTouch() {
     Wire.beginTransmission(CST816_ADDR);
     Wire.write(0x02);
@@ -467,7 +470,7 @@ void checkTouch() {
         Wire.read(); Wire.read(); Wire.read(); Wire.read(); // xh, xl, yh, yl
         if (fingers > 0 && (millis() - lastTouchMs > 350)) {
             lastTouchMs = millis();
-            paused = !paused;
+            pomo.handleTap();
         }
     }
 }
@@ -484,10 +487,12 @@ void checkButtons() {
         uint32_t duration = millis() - btnPressTime;
         if (duration >= 50) {
             if (duration >= 800) {
-                // Long press: Re-seed current landscape
+                // Long press: Re-seed current landscape AND reset Pomodoro timer
+                pomo.init();
                 resetLandscape(currentStyle);
             } else {
                 // Short click: Switch Art Style (Shan-Shui <-> Super Mario World)
+                // Timer continues unbroken!
                 resetLandscape(currentStyle == STYLE_SHAN_SHUI ? STYLE_SUPER_MARIO : STYLE_SHAN_SHUI);
             }
         }
@@ -535,6 +540,8 @@ void setup() {
     xTaskCreatePinnedToCore(core0RenderTask, "ShanShuiGen", 16384, NULL, 0, NULL, 0);
     nextTileToRender = 2;
     tileRenderBusy = true;
+
+    pomo.init(); // Starts in still IDLE state (0 speed, still art piece)
 }
 
 float scrollAccum = 0.0f;
@@ -543,9 +550,10 @@ void loop() {
     checkButtons();
     checkTouch();
 
-    if (!paused) {
-        scrollAccum += scrollSpeedPx;
-    }
+    float targetSpeed = (currentStyle == STYLE_SUPER_MARIO) ? 1.5f : 1.0f;
+    pomo.update(targetSpeed);
+
+    scrollAccum += pomo.currentSpeed;
 
     int localPx = (int)scrollAccum;
     if (localPx >= SCREEN_W) {
@@ -564,5 +572,9 @@ void loop() {
     }
 
     composeFrame(localPx);
+
+    // Render zero-flicker DMA Pomodoro overlay directly into frameBuf!
+    pomo.render(frameBuf, (int)currentStyle);
+
     gfx->draw16bitRGBBitmap(0, 0, frameBuf, SCREEN_W, SCREEN_H);
 }

@@ -9,14 +9,13 @@
 // ============================================================================
 // MarioWorldEngine: Super Mario World (SNES) Iconic 16-bit Landscape
 // Procedurally generated endless scrolling stage:
-// - Beautiful vibrant Mario Cyan Sky
-// - Fluffy white smiling cartoon clouds
-// - Rounded green hills with eyes (도트 눈 달린 둥근 초록 동산)
-// - Classic Checkered Soil & Green Grass Ground (체크무늬 흙바닥 & 잔디)
-// - Green Warp Pipes (초록색 파이프 토관)
+// - Beautiful vibrant Mario Cyan Sky (#70C0FF)
+// - Fluffy white smiling cartoon clouds with crisp black outlines & cute eyes
+// - Rounded green rolling hills with eyes (도트 눈 달린 둥근 초록 동산)
+// - Classic Warm Checkered Soil & Green Grass Ground (체크무늬 흙바닥 & 잔디)
+// - Firmly planted Green Warp Pipes (땅에 완벽히 밀착된 초록색 토관)
 // - Floating Question Mark [?] & Yellow/Brown Brick Blocks (물음표 블록, 벽돌)
 // - Colorful Mushroom Platforms (기둥 달린 버섯 발판)
-// - Bushes with eyes
 // ============================================================================
 
 class MarioWorldEngine {
@@ -26,62 +25,136 @@ public:
 
     MarioWorldEngine(ShanShuiEngine* b) : base(b) {}
 
-    // 16-bit SNES Super Mario World Color Palette (RGB565 converted)
-    static const ColorRGBA SKY_BLUE;      // 0x5D7F: #5C94FC (맑은 마리오 하늘색)
-    static const ColorRGBA GRASS_LIGHT;   // 0x4726: #40D830 (밝은 초록 잔디)
-    static const ColorRGBA GRASS_DARK;    // 0x1CE0: #108800 (어두운 잔디 테두리)
-    static const ColorRGBA DIRT_LIGHT;    // 0xDE68: #D89840 (주황빛 황토 흙)
-    static const ColorRGBA DIRT_DARK;     // 0xA340: #A06000 (갈색 흙 경계)
-    static const ColorRGBA PIPE_GREEN;    // 0x0600: #00C000 (파이프 밝은 초록)
-    static const ColorRGBA PIPE_DARK;     // 0x0380: #007000 (파이프 그림자)
-    static const ColorRGBA BLOCK_GOLD;    // 0xFCE0: #F8B800 (물음표 블록 노랑)
-    static const ColorRGBA BLOCK_BROWN;   // 0xB2C0: #B05800 (벽돌색)
-    static const ColorRGBA CLOUD_WHITE;   // 0xFFFF: #FFFFFF (순백 구름)
-    static const ColorRGBA OUTLINE_BLACK; // 0x0000: #000000 (카툰 외곽선)
+    // 16-bit SNES Super Mario World Color Palette
+    static const ColorRGBA SKY_BLUE;      // #70C0FF (맑고 화사한 닌텐도 하늘색)
+    static const ColorRGBA GRASS_LIGHT;   // #48E030 (밝은 초록 잔디)
+    static const ColorRGBA GRASS_DARK;    // #109000 (어두운 잔디 테두리)
+    static const ColorRGBA DIRT_LIGHT;    // #E4A048 (따뜻한 황토빛 흙)
+    static const ColorRGBA DIRT_DARK;     // #B87830 (갈색 흙 경계)
+    static const ColorRGBA PIPE_GREEN;    // #00C800 (파이프 밝은 초록)
+    static const ColorRGBA PIPE_DARK;     // #007800 (파이프 그림자)
+    static const ColorRGBA BLOCK_GOLD;    // #F8B800 (물음표 블록 노랑)
+    static const ColorRGBA BLOCK_BROWN;   // #B05800 (벽돌색)
+    static const ColorRGBA CLOUD_WHITE;   // #FFFFFF (순백 구름)
+    static const ColorRGBA OUTLINE_BLACK; // #000000 (카툰 외곽선)
 
     // Helper: Screen-space fast filled rectangle
     void fillRect(int x, int y, int w, int h, const ColorRGBA& col) {
-        if (!canvas) return;
+        if (!canvas || w <= 0 || h <= 0) return;
         int x0 = std::max(0, x), x1 = std::min(canvas->width - 1, x + w - 1);
         int y0 = std::max(0, y), y1 = std::min(canvas->height - 1, y + h - 1);
         if (x0 > x1 || y0 > y1) return;
-        uint8_t a = (uint8_t)(col.a * 255.0f);
+        uint16_t c565 = Canvas565::to565(col.r, col.g, col.b);
         for (int cy = y0; cy <= y1; cy++) {
-            canvas->blendHLine(x0, x1, cy, col.r, col.g, col.b, a, false);
+            uint16_t* row = &canvas->buf[cy * canvas->width];
+            for (int cx = x0; cx <= x1; cx++) {
+                row[cx] = c565;
+            }
+        }
+    }
+
+    // Helper: Screen-space fast filled circle
+    void fillCircle(int cx, int cy, int r, const ColorRGBA& col) {
+        if (!canvas || r <= 0) return;
+        uint16_t c565 = Canvas565::to565(col.r, col.g, col.b);
+        int r2 = r * r;
+        for (int dy = -r; dy <= r; dy++) {
+            int y = cy + dy;
+            if (y < 0 || y >= canvas->height) continue;
+            int dx = (int)sqrtf((float)(r2 - dy * dy));
+            int x0 = std::max(0, cx - dx);
+            int x1 = std::min(canvas->width - 1, cx + dx);
+            uint16_t* row = &canvas->buf[y * canvas->width];
+            for (int x = x0; x <= x1; x++) {
+                row[x] = c565;
+            }
         }
     }
 
     // Helper: Two black oval eyes with cute highlights (마리오 특유의 타원형 눈)
-    void drawMarioEyes(int cx, int cy, int spacing = 12, int h = 10) {
+    void drawMarioEyes(int cx, int cy, int spacing = 12, int h = 9) {
         for (int dir : {-1, 1}) {
             int ex = cx + dir * (spacing / 2);
-            // Black eye
-            fillRect(ex - 2, cy - h / 2, 4, h, OUTLINE_BLACK);
+            // Black vertical pill eye
+            fillRect(ex - 1, cy - h / 2, 3, h, OUTLINE_BLACK);
             // White shine dot at top
-            fillRect(ex - 1, cy - h / 2 + 1, 2, 3, CLOUD_WHITE);
+            fillRect(ex, cy - h / 2 + 1, 1, 2, CLOUD_WHITE);
         }
     }
 
-    // 1. Classic Mario Fluffy Smiling Cloud
-    void drawCloud(float wx, float wy, int bumps = 3) {
+    // 1. Classic Mario Fluffy Smiling Cloud (Crisp circular lobes with black outline)
+    void drawCloud(float wx, float wy, int bumpCount = 3) {
         Pt s = canvas->toScreen(Pt(wx, wy));
         int cx = (int)s.x, cy = (int)s.y;
-        if (cx < -120 || cx > canvas->width + 120) return;
+        if (cx < -100 || cx > canvas->width + 100) return;
 
-        int w = bumps * 24 + 16;
-        int h = 26;
+        // Keep cloud floating naturally in the upper sky (y: 28..65)
+        if (cy < 26) cy = 26;
+        if (cy > 65) cy = 65;
 
-        // Cloud body shadow & white filling
-        fillRect(cx - w / 2, cy, w, h, CLOUD_WHITE);
-        for (int i = 0; i < bumps; i++) {
-            int bx = cx - (bumps - 1) * 12 + i * 24;
-            base->blob(wx + (i - bumps * 0.5f) * 60.0f, wy - 30.0f, 32.0f, 22.0f, 0, CLOUD_WHITE, 0.1f, false);
+        if (bumpCount <= 2) {
+            // Small 2-bump cloud
+            int r = 13;
+            // Black border silhouette
+            fillCircle(cx - 12, cy, r + 2, OUTLINE_BLACK);
+            fillCircle(cx + 12, cy, r + 2, OUTLINE_BLACK);
+            fillRect(cx - 12, cy - r, 24, (r + 2) * 2, OUTLINE_BLACK);
+
+            // White body fill
+            fillCircle(cx - 12, cy, r, CLOUD_WHITE);
+            fillCircle(cx + 12, cy, r, CLOUD_WHITE);
+            fillRect(cx - 12, cy - r + 2, 24, r * 2 - 2, CLOUD_WHITE);
+
+            // Subtle bottom blue shade
+            fillRect(cx - 10, cy + r - 2, 20, 2, ColorRGBA(180, 216, 255));
+
+            // Cute smiling eyes
+            drawMarioEyes(cx, cy, 10, 7);
+        } else if (bumpCount == 3) {
+            // Classic 3-bump cloud
+            int rSide = 12;
+            int rMid = 16;
+            // Black border silhouette
+            fillCircle(cx - 18, cy + 2, rSide + 2, OUTLINE_BLACK);
+            fillCircle(cx,      cy - 4, rMid + 2,  OUTLINE_BLACK);
+            fillCircle(cx + 18, cy + 2, rSide + 2, OUTLINE_BLACK);
+            fillRect(cx - 18, cy, 36, rSide + 4, OUTLINE_BLACK);
+
+            // White body fill
+            fillCircle(cx - 18, cy + 2, rSide, CLOUD_WHITE);
+            fillCircle(cx,      cy - 4, rMid,  CLOUD_WHITE);
+            fillCircle(cx + 18, cy + 2, rSide, CLOUD_WHITE);
+            fillRect(cx - 18, cy, 36, rSide + 2, CLOUD_WHITE);
+
+            // Subtle bottom blue shade
+            fillRect(cx - 16, cy + rSide, 32, 2, ColorRGBA(180, 216, 255));
+
+            // Cute smiling eyes
+            drawMarioEyes(cx, cy + 2, 11, 8);
+        } else {
+            // Large 4-bump cloud
+            int rSide = 11;
+            int rMid = 15;
+            // Black border silhouette
+            fillCircle(cx - 27, cy + 3, rSide + 2, OUTLINE_BLACK);
+            fillCircle(cx - 9,  cy - 3, rMid + 2,  OUTLINE_BLACK);
+            fillCircle(cx + 9,  cy - 3, rMid + 2,  OUTLINE_BLACK);
+            fillCircle(cx + 27, cy + 3, rSide + 2, OUTLINE_BLACK);
+            fillRect(cx - 27, cy + 1, 54, rSide + 4, OUTLINE_BLACK);
+
+            // White body fill
+            fillCircle(cx - 27, cy + 3, rSide, CLOUD_WHITE);
+            fillCircle(cx - 9,  cy - 3, rMid,  CLOUD_WHITE);
+            fillCircle(cx + 9,  cy - 3, rMid,  CLOUD_WHITE);
+            fillCircle(cx + 27, cy + 3, rSide, CLOUD_WHITE);
+            fillRect(cx - 27, cy + 1, 54, rSide + 2, CLOUD_WHITE);
+
+            // Subtle bottom blue shade
+            fillRect(cx - 24, cy + rSide, 48, 2, ColorRGBA(180, 216, 255));
+
+            // Cute smiling eyes
+            drawMarioEyes(cx, cy + 2, 12, 8);
         }
-        // Outline & Bottom border
-        fillRect(cx - w / 2, cy + h - 2, w, 2, ColorRGBA(180, 210, 255));
-        
-        // Cute smiling eyes
-        drawMarioEyes(cx, cy + 8, 14, 8);
     }
 
     // 2. Iconic Super Mario Rounded Hills with Eyes (동글동글한 초록 동산)
@@ -95,13 +168,13 @@ public:
             curve.push_back(Pt(x, y));
         }
         std::vector<Pt> body = curve;
-        body.push_back(Pt(wid * 0.5f, 100.0f));
-        body.push_back(Pt(-wid * 0.5f, 100.0f));
+        body.push_back(Pt(wid * 0.5f, 150.0f));
+        body.push_back(Pt(-wid * 0.5f, 150.0f));
 
         // Vibrant Green Hill Fill
         base->poly(body, wx, wy, GRASS_LIGHT, ColorRGBA(0, 0, 0, 0), 0, false);
         // Thick cartoon outline
-        base->stroke(curve, wx, wy, OUTLINE_BLACK, 3.5f);
+        base->stroke(curve, wx, wy, OUTLINE_BLACK, 3.0f);
 
         // Spot shading stripes on hill crest
         for (int i = 4; i < segs - 4; i += 4) {
@@ -115,35 +188,43 @@ public:
         }
     }
 
-    // 3. Classic Green Warp Pipe (초록색 토관)
-    void drawPipe(float wx, float wy, int heightPx = 55) {
-        Pt s = canvas->toScreen(Pt(wx, wy));
-        int px = (int)s.x, py = (int)s.y;
+    // 3. Classic Green Warp Pipe (초록색 토관 - 땅에 완벽 밀착)
+    void drawPipe(float wx, int heightPx = 48) {
+        Pt s = canvas->toScreen(Pt(wx, 0));
+        int px = (int)s.x;
         if (px < -60 || px > canvas->width + 60) return;
 
-        int pw = 36;
-        int rimW = 44, rimH = 16;
-        int topY = py - heightPx;
+        int groundY = canvas->height - 42; // Exactly 198px (Ground surface)
+        int topY = groundY - heightPx;
 
-        // Pipe Rim (Lip)
-        fillRect(px - rimW / 2, topY, rimW, rimH, PIPE_GREEN);
-        fillRect(px - rimW / 2 + 3, topY + 2, 6, rimH - 4, ColorRGBA(120, 240, 100)); // highlight
-        fillRect(px + rimW / 2 - 10, topY + 2, 8, rimH - 4, PIPE_DARK);              // shadow
-        // Rim border
-        fillRect(px - rimW / 2, topY, rimW, 2, OUTLINE_BLACK);
-        fillRect(px - rimW / 2, topY + rimH - 1, rimW, 2, OUTLINE_BLACK);
-        fillRect(px - rimW / 2, topY, 2, rimH, OUTLINE_BLACK);
-        fillRect(px + rimW / 2 - 2, topY, 2, rimH, OUTLINE_BLACK);
+        int rimW = 42, rimH = 15;
+        int bodyW = 34;
+        int rimX = px - rimW / 2;
+        int bodyX = px - bodyW / 2;
 
-        // Pipe Body
-        int bodyY = topY + rimH;
-        int bodyH = heightPx - rimH;
-        fillRect(px - pw / 2, bodyY, pw, bodyH, PIPE_GREEN);
-        fillRect(px - pw / 2 + 3, bodyY, 5, bodyH, ColorRGBA(120, 240, 100)); // highlight
-        fillRect(px + pw / 2 - 9, bodyY, 7, bodyH, PIPE_DARK);               // shadow
-        // Body border
-        fillRect(px - pw / 2, bodyY, 2, bodyH, OUTLINE_BLACK);
-        fillRect(px + pw / 2 - 2, bodyY, 2, bodyH, OUTLINE_BLACK);
+        // 1. Pipe Rim (Top collar)
+        fillRect(rimX, topY, rimW, rimH, PIPE_GREEN);
+        fillRect(rimX + 4, topY + 2, 5, rimH - 4, ColorRGBA(140, 248, 120)); // highlight
+        fillRect(rimX + rimW - 10, topY + 2, 6, rimH - 4, PIPE_DARK);        // shadow
+        // Rim black borders
+        fillRect(rimX, topY, rimW, 2, OUTLINE_BLACK);
+        fillRect(rimX, topY + rimH - 2, rimW, 2, OUTLINE_BLACK);
+        fillRect(rimX, topY, 2, rimH, OUTLINE_BLACK);
+        fillRect(rimX + rimW - 2, topY, 2, rimH, OUTLINE_BLACK);
+
+        // 2. Pipe Body: Extends from under rim down to ground surface
+        int bodyY = topY + rimH - 1;
+        int bodyH = groundY - bodyY;
+        if (bodyH > 0) {
+            fillRect(bodyX, bodyY, bodyW, bodyH, PIPE_GREEN);
+            fillRect(bodyX + 4, bodyY, 4, bodyH, ColorRGBA(140, 248, 120)); // highlight
+            fillRect(bodyX + bodyW - 8, bodyY, 5, bodyH, PIPE_DARK);        // shadow
+            // Vertical black borders
+            fillRect(bodyX, bodyY, 2, bodyH, OUTLINE_BLACK);
+            fillRect(bodyX + bodyW - 2, bodyY, 2, bodyH, OUTLINE_BLACK);
+            // Bottom black anchor line
+            fillRect(bodyX, groundY - 1, bodyW, 2, OUTLINE_BLACK);
+        }
     }
 
     // 4. Floating Question Block [?] or Brick Block
@@ -160,7 +241,7 @@ public:
             fillRect(bx, by + sz - 1, sz, 1, OUTLINE_BLACK);
             fillRect(bx, by, 1, sz, OUTLINE_BLACK);
             fillRect(bx + sz - 1, by, 1, sz, OUTLINE_BLACK);
-            // White highlight corner rivets
+            // Corner rivets
             fillRect(bx + 2, by + 2, 2, 2, CLOUD_WHITE);
             fillRect(bx + sz - 4, by + 2, 2, 2, DIRT_DARK);
             fillRect(bx + 2, by + sz - 4, 2, 2, DIRT_DARK);
@@ -189,8 +270,11 @@ public:
     void drawMushroomPlatform(float wx, float wy, float wid = 70.0f) {
         Pt s = canvas->toScreen(Pt(wx, wy));
         int mx = (int)s.x, my = (int)s.y;
+        int groundY = canvas->height - 42;
         int stemW = 12;
-        int stemH = 70;
+        int stemH = groundY - my;
+        if (stemH <= 0) return;
+
         // White stem
         fillRect(mx - stemW / 2, my, stemW, stemH, CLOUD_WHITE);
         fillRect(mx - stemW / 2, my, 2, stemH, OUTLINE_BLACK);
@@ -214,35 +298,37 @@ public:
     // 6. Mario Ground Floor: Checkered Soil & Crisp Green Grass Layer
     void drawGround(int sliceX, int sliceW) {
         if (!canvas) return;
-        int groundY = canvas->height - 42; // Bottom 42 pixels
-
-        // Checkered dirt blocks
-        for (int y = groundY + 8; y < canvas->height; y += 16) {
-            for (int x = sliceX; x < sliceX + sliceW; x += 16) {
-                bool chk = ((x / 16) + (y / 16)) % 2 == 0;
-                fillRect(x, y, 16, 16, chk ? DIRT_LIGHT : DIRT_DARK);
-                // Grid border
-                fillRect(x, y, 16, 1, ColorRGBA(120, 60, 0));
-                fillRect(x, y, 1, 16, ColorRGBA(120, 60, 0));
-            }
-        }
+        int groundY = canvas->height - 42; // Bottom 42 pixels (y: 198..239)
 
         // Top Grass Lip (초록 잔디 테두리)
         fillRect(sliceX, groundY, sliceW, 8, GRASS_LIGHT);
         fillRect(sliceX, groundY + 7, sliceW, 2, GRASS_DARK);
         fillRect(sliceX, groundY, sliceW, 2, OUTLINE_BLACK);
+
+        // Warm 16-bit Checkered Soil
+        for (int y = groundY + 8; y < canvas->height; y += 16) {
+            int bh = std::min(16, canvas->height - y);
+            for (int x = sliceX; x < sliceX + sliceW; x += 16) {
+                int bw = std::min(16, sliceX + sliceW - x);
+                bool chk = (((x / 16) + (y / 16)) & 1) == 0;
+                fillRect(x, y, bw, bh, chk ? DIRT_LIGHT : DIRT_DARK);
+                // Subtle mortar lines
+                fillRect(x, y, bw, 1, ColorRGBA(140, 80, 20));
+                fillRect(x, y, 1, bh, ColorRGBA(140, 80, 20));
+            }
+        }
     }
 };
 
 // Static color constants for Mario World
-const ColorRGBA MarioWorldEngine::SKY_BLUE      = ColorRGBA(92, 148, 252); // #5C94FC
-const ColorRGBA MarioWorldEngine::GRASS_LIGHT   = ColorRGBA(64, 216, 48);  // #40D830
-const ColorRGBA MarioWorldEngine::GRASS_DARK    = ColorRGBA(16, 136, 0);   // #108800
-const ColorRGBA MarioWorldEngine::DIRT_LIGHT    = ColorRGBA(216, 152, 64); // #D89840
-const ColorRGBA MarioWorldEngine::DIRT_DARK     = ColorRGBA(160, 96, 0);   // #A06000
-const ColorRGBA MarioWorldEngine::PIPE_GREEN    = ColorRGBA(0, 192, 0);    // #00C000
-const ColorRGBA MarioWorldEngine::PIPE_DARK     = ColorRGBA(0, 112, 0);    // #007000
-const ColorRGBA MarioWorldEngine::BLOCK_GOLD    = ColorRGBA(248, 184, 0);  // #F8B800
-const ColorRGBA MarioWorldEngine::BLOCK_BROWN   = ColorRGBA(176, 88, 0);   // #B05800
+const ColorRGBA MarioWorldEngine::SKY_BLUE      = ColorRGBA(112, 192, 255); // #70C0FF
+const ColorRGBA MarioWorldEngine::GRASS_LIGHT   = ColorRGBA(72, 224, 48);   // #48E030
+const ColorRGBA MarioWorldEngine::GRASS_DARK    = ColorRGBA(16, 144, 0);    // #109000
+const ColorRGBA MarioWorldEngine::DIRT_LIGHT    = ColorRGBA(228, 160, 72);  // #E4A048
+const ColorRGBA MarioWorldEngine::DIRT_DARK     = ColorRGBA(184, 120, 48);  // #B87830
+const ColorRGBA MarioWorldEngine::PIPE_GREEN    = ColorRGBA(0, 200, 0);     // #00C800
+const ColorRGBA MarioWorldEngine::PIPE_DARK     = ColorRGBA(0, 120, 0);     // #007800
+const ColorRGBA MarioWorldEngine::BLOCK_GOLD    = ColorRGBA(248, 184, 0);   // #F8B800
+const ColorRGBA MarioWorldEngine::BLOCK_BROWN   = ColorRGBA(176, 88, 0);    // #B05800
 const ColorRGBA MarioWorldEngine::CLOUD_WHITE   = ColorRGBA(255, 255, 255);
 const ColorRGBA MarioWorldEngine::OUTLINE_BLACK = ColorRGBA(0, 0, 0);

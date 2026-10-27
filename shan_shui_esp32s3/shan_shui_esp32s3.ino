@@ -178,15 +178,15 @@ void planChunk(float xmin, float xmax) {
         }
     } else {
         // --- Mode 1: Super Mario World Planning ---
-        // 1. Smiling White Clouds in the sky (y: 110..180 world coords)
-        for (float cx = xmin + 80.0f; cx < xmax; cx += 240.0f) {
-            if (engine.rand01() < 0.85f) {
+        // 1. Smiling White Clouds in the sky (spaced out gracefully, never crowded)
+        for (float cx = xmin + 140.0f; cx < xmax; cx += 560.0f) {
+            if (engine.rand01() < 0.75f) {
                 PlannedItem cloud = {
-                    TAG_MARIO_CLOUD, cx + engine.normRand(-40.0f, 40.0f),
-                    engine.normRand(110.0f, 175.0f), 0,
+                    TAG_MARIO_CLOUD, cx + engine.normRand(-50.0f, 50.0f),
+                    engine.normRand(140.0f, 220.0f), 0,
                     (float)engine.randChoice({2, 3, 3, 4}), 0, false
                 };
-                chadd(cloud, 180.0f);
+                chadd(cloud, 140.0f);
             }
         }
 
@@ -206,21 +206,25 @@ void planChunk(float xmin, float xmax) {
         };
         chadd(fgHill, 240.0f);
 
-        // 4. Warp Pipes (초록색 토관 - y: 650)
-        if (engine.rand01() < 0.65f) {
-            float px = xmin + (xmax - xmin) * (0.15f + 0.7f * engine.rand01());
+        // 4. Warp Pipes (초록색 토관 - 땅에 완벽 밀착)
+        float pipeX = -9999.0f;
+        if (engine.rand01() < 0.55f) {
+            pipeX = xmin + (xmax - xmin) * (0.2f + 0.6f * engine.rand01());
             PlannedItem pipe = {
-                TAG_MARIO_PIPE, px, 650.0f, 0,
-                (float)engine.randChoice({40, 55, 75}), 0, false
+                TAG_MARIO_PIPE, pipeX, 650.0f, 0,
+                (float)engine.randChoice({36, 48, 64}), 0, false
             };
             chadd(pipe, 200.0f);
         }
 
         // 5. Floating Blocks: [?] Question Mark & Brick Blocks
-        if (engine.rand01() < 0.75f) {
-            float bx = xmin + (xmax - xmin) * (0.2f + 0.6f * engine.rand01());
-            float by = engine.normRand(360.0f, 440.0f);
-            int blockCount = engine.randChoice({1, 3, 4});
+        if (engine.rand01() < 0.70f) {
+            float bx = xmin + (xmax - xmin) * (0.15f + 0.7f * engine.rand01());
+            if (pipeX > -9000.0f && fabsf(bx - pipeX) < 140.0f) {
+                bx += (bx > pipeX) ? 140.0f : -140.0f;
+            }
+            float by = engine.normRand(360.0f, 420.0f);
+            int blockCount = engine.randChoice({1, 3, 3, 4});
             PlannedItem blocks = {
                 TAG_MARIO_BLOCKS, bx, by, 0, (float)blockCount, 0, false
             };
@@ -228,8 +232,11 @@ void planChunk(float xmin, float xmax) {
         }
 
         // 6. Mushroom Platforms
-        if (engine.rand01() < 0.35f) {
+        if (engine.rand01() < 0.30f) {
             float mx = xmin + (xmax - xmin) * (0.2f + 0.6f * engine.rand01());
+            if (pipeX > -9000.0f && fabsf(mx - pipeX) < 150.0f) {
+                mx += (mx > pipeX) ? 150.0f : -150.0f;
+            }
             PlannedItem mush = {
                 TAG_MARIO_MUSHROOM, mx, 650.0f, 0, engine.normRand(120.0f, 170.0f), 0, false
             };
@@ -268,7 +275,7 @@ void drawPlannedItem(const PlannedItem& it) {
             marioEngine.drawMarioHill(it.x, it.y, it.arg1, it.arg2, true);
             break;
         case TAG_MARIO_PIPE:
-            marioEngine.drawPipe(it.x, it.y, (int)it.arg1);
+            marioEngine.drawPipe(it.x, (int)it.arg1);
             break;
         case TAG_MARIO_BLOCKS: {
             int cnt = (int)it.arg1;
@@ -306,8 +313,8 @@ void renderWindow(Canvas565* target, float camX, int sliceScreenX, int sliceScre
             }
         }
     } else {
-        // Clear slice with crisp 16-bit Super Mario Cyan Sky (#5C94FC)
-        uint16_t skyColor = Canvas565::to565(92, 148, 252);
+        // Clear slice with crisp 16-bit Super Mario Cyan Sky (#70C0FF)
+        uint16_t skyColor = Canvas565::to565(112, 192, 255);
         for (int y = 0; y < target->height; y++) {
             uint16_t* dstRow = &target->buf[y * target->width];
             for (int x = sliceScreenX; x < sliceScreenX + sliceScreenW; x++) {
@@ -326,18 +333,43 @@ void renderWindow(Canvas565* target, float camX, int sliceScreenX, int sliceScre
     }
 
     std::sort(visible.begin(), visible.end(), [](const PlannedItem* a, const PlannedItem* b) {
-        float ya = (a->tag == TAG_WATER || a->tag == TAG_MARIO_CLOUD) ? -10000.0f :
-                   (a->tag == TAG_DISTMOUNT || a->tag == TAG_MARIO_HILL_BG) ? -5000.0f : a->y;
-        float yb = (b->tag == TAG_WATER || b->tag == TAG_MARIO_CLOUD) ? -10000.0f :
-                   (b->tag == TAG_DISTMOUNT || b->tag == TAG_MARIO_HILL_BG) ? -5000.0f : b->y;
-        return ya < yb;
+        if (currentStyle == STYLE_SUPER_MARIO) {
+            auto getMarioZ = [](ItemTag tag) -> int {
+                switch (tag) {
+                    case TAG_MARIO_CLOUD:    return 10;
+                    case TAG_MARIO_HILL_BG:  return 20;
+                    case TAG_MARIO_HILL_FG:  return 30;
+                    case TAG_MARIO_MUSHROOM: return 40;
+                    case TAG_MARIO_PIPE:     return 50;
+                    case TAG_MARIO_BLOCKS:   return 60;
+                    default:                 return 100;
+                }
+            };
+            return getMarioZ(a->tag) < getMarioZ(b->tag);
+        } else {
+            float ya = (a->tag == TAG_WATER) ? -10000.0f :
+                       (a->tag == TAG_DISTMOUNT) ? -5000.0f : a->y;
+            float yb = (b->tag == TAG_WATER) ? -10000.0f :
+                       (b->tag == TAG_DISTMOUNT) ? -5000.0f : b->y;
+            return ya < yb;
+        }
     });
 
     uint64_t savedPrng = engine.prng_s;
     engine.canvas = target;
     marioEngine.canvas = target;
 
+    bool marioGroundDrawn = false;
+
     for (const auto* it : visible) {
+        // In Mario mode: Stamp ground BEFORE foreground items (pipes, mushrooms, blocks)
+        if (currentStyle == STYLE_SUPER_MARIO && !marioGroundDrawn) {
+            if (it->tag == TAG_MARIO_MUSHROOM || it->tag == TAG_MARIO_PIPE || it->tag == TAG_MARIO_BLOCKS) {
+                marioEngine.drawGround(sliceScreenX, sliceScreenW);
+                marioGroundDrawn = true;
+            }
+        }
+
         uint32_t itemHash = (uint32_t)(it->x * 13.37f + it->y * 7.13f + it->seed * 997.0f) ^ ((uint32_t)it->tag * 0x9e3779b9U);
         uint64_t y = (itemHash * 2654435761ULL + 54321ULL) % engine.prng_m;
         while (y % engine.prng_p == 0 || y % engine.prng_q == 0 || y <= 1) {
@@ -348,8 +380,8 @@ void renderWindow(Canvas565* target, float camX, int sliceScreenX, int sliceScre
         vTaskDelay(1);
     }
 
-    // Mario Mode: Stamp the iconic checkered soil & green grass ground floor!
-    if (currentStyle == STYLE_SUPER_MARIO) {
+    // In case no foreground items were on screen, stamp ground now
+    if (currentStyle == STYLE_SUPER_MARIO && !marioGroundDrawn) {
         marioEngine.drawGround(sliceScreenX, sliceScreenW);
     }
 

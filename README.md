@@ -10,18 +10,20 @@
 
 The original `shan-shui-inf` renders thousands of translucent SVG polygons in a desktop browser DOM. Running the procedural Perlin-noise mountain, tree, architecture, and brush-stroke algorithms directly per frame on a microcontroller would drop below 1–3 FPS.
 
-Using **Antigravity + Gemini 4 Argon**, this project ports the full procedural generation pipeline to standalone C++ (`Arduino-ESP32` + `Arduino_GFX`) and pairs it with a **Dual-Core PSRAM Tile Conveyor Engine** for smooth, uninterrupted **60 FPS auto-scrolling**:
+Using **Antigravity + Gemini 4 Argon**, this project ports the procedural generation pipeline to standalone C++ (`Arduino-ESP32` + `Arduino_GFX`) and pairs it with a **Dual-Core PSRAM Tile Conveyor Engine** for smooth, uninterrupted **60 FPS auto-scrolling** with **dual procedural visual styles**:
 
-1. **Full C++ Procedural Shan-Shui Generator ([`shan_shui_esp32s3/ShanShuiEngine.h`](shan_shui_esp32s3/ShanShuiEngine.h))**
-   - **Blum-Blum-Shub PRNG & 4-Octave Perlin Noise**: Deterministic seed-based landscape generation matching the original JS implementation.
-   - **Landforms & Cunfa (皴法) Brushwork**: Layered distant mountains (`distMount`), main peaks (`mountain`) with hundreds of textured ink strokes (`texture`), mountain feet (`foot`), flat-topped plateaus (`flatMount`), rocks (`rock`), and rippling water (`water`).
-   - **Flora, Architecture & Figures**: Ridge/mist foliage (`tree01`, `tree02`, `tree03`), gnarly cliffside pines (`tree04`), multi-story pavilions (`arch02`), mountain-peak pagodas (`arch03`), and river boats with robed oarsmen (`boat01`, `man`).
+1. **Dual Procedural Visual Engines**
+   - **Original Shan-Shui Style ([`shan_shui_esp32s3/ShanShuiEngine.h`](shan_shui_esp32s3/ShanShuiEngine.h))**: Blum-Blum-Shub PRNG, 4-Octave Perlin Noise, layered mountain peaks with cunfa (皴法) ink-wash texturing, footings, plateaus, misty foliage, cliffside pines, pagodas, robed boatmen, and rippling water.
+   - **Super Mario World Style ([`shan_shui_esp32s3/MarioWorldEngine.h`](shan_shui_esp32s3/MarioWorldEngine.h))**: 16-bit retro procedural landscape featuring bright cyan sky (`#5C94FC`), iconic smiling clouds with eyes, rolling green hills with friendly eyes, mushroom platforms, question mark (`[?]`) and brick blocks, green warp pipes, and checkered soil & grass ground floor.
 2. **RGB565 Scanline Polygon & Ink-Wash Alpha Rasterizer ([`shan_shui_esp32s3/Canvas565.h`](shan_shui_esp32s3/Canvas565.h))**
    - Custom software scanline polygon filler and Bresenham line rasterizer with real-time **alpha blending** over a procedurally generated 64×64 seamless rice-paper (`PAPER_COLOR`) texture tile.
 3. **Dual-Core PSRAM Tile Conveyor Belt ([`shan_shui_esp32s3/shan_shui_esp32s3.ino`](shan_shui_esp32s3/shan_shui_esp32s3.ino))**
    - **8MB Octal PSRAM Ring Buffer**: Maintains three `320×240` RGB565 landscape tiles (`tiles[0..2]`) in PSRAM plus an internal DMA-capable SRAM framebuffer (`frameBuf`).
    - **Core 0 (Generator Worker)**: Pre-renders the upcoming horizon tile (`tiles[2]`) in the background while yielding cleanly to the FreeRTOS idle watchdog.
-   - **Core 1 (60 FPS Scroll Engine)**: Composes a sliding `320×240` viewport across `tiles[0]` and `tiles[1]` in `<0.2 ms` via `memcpy` and streams it over `FSPI` to the ST7789T3 display.
+   - **Core 1 (60 FPS Scroll Engine)**: Composes a sliding `320×240` viewport across `tiles[0]` and `tiles[1]` in `<0.2 ms` via `memcpy` and streams it over `FSPI` to the ST7789T3 display without any UI flickering.
+4. **Hardware Controls (BOOT Button / GPIO 0)**
+   - **Short Press (< 800ms)**: Toggle art styles instantly between Traditional Shan-Shui and Super Mario World.
+   - **Long Press (≥ 800ms)**: Re-seed the landscape with a new random seed.
 
 ---
 
@@ -30,9 +32,7 @@ Using **Antigravity + Gemini 4 Argon**, this project ports the full procedural g
 * **Board**: [Waveshare ESP32-S3-LCD-2 / ESP32-S3-Touch-LCD-2](https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-2)
 * **MCU**: ESP32-S3 (Dual-Core Xtensa LX7 @ 240MHz, 8MB Octal PSRAM, 16MB Flash)
 * **Display**: 2.0" IPS LCD (`240×320`, ST7789T3 SPI driver, used in `320×240` landscape mode)
-* **Touch (Optional)**: CST816D Capacitive Touch (`I2C`)
-  * **Tap anywhere**: Cycle scroll speed (`1.0x` → `2.0x` → `3.5x` → `Pause`)
-  * **Tap top-left corner**: Generate a brand-new landscape with a new random seed
+* **Controls**: Physical BOOT button on `GPIO 0` (Short click: style switch / Long click: re-seed)
 
 | Signal | ESP32-S3 GPIO | Description |
 | :--- | :--- | :--- |

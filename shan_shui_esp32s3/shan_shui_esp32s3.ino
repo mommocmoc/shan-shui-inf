@@ -3,13 +3,12 @@
 #include <Wire.h>
 #include "Canvas565.h"
 #include "ShanShuiEngine.h"
-#include "JingyeongEngine.h"
+#include "MarioWorldEngine.h"
 
 // ============================================================================
 // Waveshare ESP32-S3-LCD-2 Hardware Pin Configuration
 // Display: 2.0" IPS 240x320 (ST7789T3, SPI) -> Used in Landscape 320x240
-// Hardware Button: BOOT button is on GPIO 0 (Active LOW with internal pullup)
-// Touch (optional/fallback): CST816D (I2C: SDA=48, SCL=47, INT=46)
+// Hardware Button: BOOT button on GPIO 0
 // ============================================================================
 #define LCD_SCLK 39
 #define LCD_MOSI 38
@@ -20,11 +19,6 @@
 #define LCD_BL   1
 
 #define PIN_BOOT_BTN 0
-
-#define TP_SDA   48
-#define TP_SCL   47
-#define TP_INT   46
-#define CST816_ADDR 0x15
 
 Arduino_DataBus *bus = new Arduino_ESP32SPI(
     LCD_DC, LCD_CS, LCD_SCLK, LCD_MOSI, LCD_MISO, FSPI);
@@ -37,12 +31,12 @@ static const int SCREEN_H = 240;
 
 // ============================================================================
 // Dual Mode System:
-// MODE 0: Chinese Shan-Shui (산수화 - 황공망 부춘산거도 스타일 남종화)
-// MODE 1: Korean Jingyeong (진경산수화 - 겸재 정선 금강전도/인왕제색도 스타일)
+// MODE 0: Chinese Traditional Shan-Shui ({Shan, Shui}* 원작 수묵 산수화)
+// MODE 1: Super Mario World (슈퍼마리오 월드 - 16-bit 레트로 횡스크롤 풍경)
 // ============================================================================
 enum ArtStyle {
-    STYLE_SHAN_SHUI = 0,
-    STYLE_JINGYEONG = 1
+    STYLE_SHAN_SHUI   = 0,
+    STYLE_SUPER_MARIO = 1
 };
 
 volatile ArtStyle currentStyle = STYLE_SHAN_SHUI;
@@ -50,7 +44,7 @@ volatile ArtStyle currentStyle = STYLE_SHAN_SHUI;
 Canvas565 *tiles[3] = { nullptr, nullptr, nullptr };
 uint16_t *frameBuf = nullptr;
 ShanShuiEngine engine;
-JingyeongEngine krEngine(&engine);
+MarioWorldEngine marioEngine(&engine);
 
 enum ItemTag {
     // Mode 0: Shan-Shui
@@ -59,11 +53,13 @@ enum ItemTag {
     TAG_MOUNT     = 2,
     TAG_FLATMOUNT = 3,
     TAG_BOAT      = 4,
-    // Mode 1: Jingyeong
-    TAG_KR_GRANITE  = 10,
-    TAG_KR_HILL     = 11,
-    TAG_KR_PAVILION = 12,
-    TAG_KR_PINE     = 13
+    // Mode 1: Super Mario World
+    TAG_MARIO_CLOUD    = 20,
+    TAG_MARIO_HILL_BG  = 21,
+    TAG_MARIO_HILL_FG  = 22,
+    TAG_MARIO_PIPE     = 23,
+    TAG_MARIO_BLOCKS   = 24,
+    TAG_MARIO_MUSHROOM = 25
 };
 
 struct PlannedItem {
@@ -94,7 +90,7 @@ void planChunk(float xmin, float xmax) {
     };
 
     if (currentStyle == STYLE_SHAN_SHUI) {
-        // --- Chinese Shan-Shui Planning ---
+        // --- Mode 0: Shan-Shui Planning ---
         auto ns = [](float x) {
             return std::max(engine.noise(x * 0.03f) - 0.55f, 0.0f) * 2.0f;
         };
@@ -181,41 +177,63 @@ void planChunk(float xmin, float xmax) {
             }
         }
     } else {
-        // --- Korean Jingyeong (진경산수화) Planning ---
-        // 1. Cleaved Granite Peaks (금강산/인왕산식 수직준 암봉)
-        float gx = xmin + (xmax - xmin) * (0.2f + 0.6f * engine.rand01());
-        PlannedItem peak = {
-            TAG_KR_GRANITE, gx, 420.0f + engine.rand01() * 120.0f,
-            engine.rand01() * 100.0f, engine.normRand(260.0f, 360.0f), engine.normRand(260.0f, 340.0f), false
-        };
-        chadd(peak, 260.0f);
-
-        // 2. Rolling Earthen Hills with dotting (미점준 토산)
-        float hx = xmin + (xmax - xmin) * engine.rand01();
-        PlannedItem hill = {
-            TAG_KR_HILL, hx, 620.0f + engine.rand01() * 80.0f,
-            engine.rand01() * 100.0f, engine.normRand(350.0f, 500.0f), engine.normRand(80.0f, 130.0f), false
-        };
-        chadd(hill, 220.0f);
-
-        // 3. Korean Mountain Pavilion (조선 정자와 선비)
-        if (engine.rand01() < 0.35f) {
-            PlannedItem pav = {
-                TAG_KR_PAVILION, xmin + (xmax - xmin) * (0.3f + 0.4f * engine.rand01()),
-                580.0f + engine.rand01() * 60.0f, 0, 0, 0, false
-            };
-            chadd(pav, 350.0f);
+        // --- Mode 1: Super Mario World Planning ---
+        // 1. Smiling White Clouds in the sky (y: 110..180 world coords)
+        for (float cx = xmin + 80.0f; cx < xmax; cx += 240.0f) {
+            if (engine.rand01() < 0.85f) {
+                PlannedItem cloud = {
+                    TAG_MARIO_CLOUD, cx + engine.normRand(-40.0f, 40.0f),
+                    engine.normRand(110.0f, 175.0f), 0,
+                    (float)engine.randChoice({2, 3, 3, 4}), 0, false
+                };
+                chadd(cloud, 180.0f);
+            }
         }
 
-        // 4. Clustered Korean Red Pines (적송/해송 숲)
-        int pineCount = 2 + (int)(engine.rand01() * 3.0f);
-        for (int p = 0; p < pineCount; p++) {
-            float px = xmin + (xmax - xmin) * engine.rand01();
-            float py = 540.0f + engine.rand01() * 130.0f;
-            PlannedItem pine = {
-                TAG_KR_PINE, px, py, 0, engine.normRand(110.0f, 180.0f), engine.normRand(5.0f, 8.0f), false
+        // 2. Large Background Rolling Hills with Eyes (y: 650 world coords)
+        float bgHillX = xmin + (xmax - xmin) * (0.2f + 0.6f * engine.rand01());
+        PlannedItem bgHill = {
+            TAG_MARIO_HILL_BG, bgHillX, 650.0f, 0,
+            engine.normRand(420.0f, 600.0f), engine.normRand(260.0f, 380.0f), false
+        };
+        chadd(bgHill, 350.0f);
+
+        // 3. Foreground Hills / Bushes with Eyes
+        float fgHillX = xmin + (xmax - xmin) * engine.rand01();
+        PlannedItem fgHill = {
+            TAG_MARIO_HILL_FG, fgHillX, 650.0f, 0,
+            engine.normRand(220.0f, 340.0f), engine.normRand(120.0f, 190.0f), false
+        };
+        chadd(fgHill, 240.0f);
+
+        // 4. Warp Pipes (초록색 토관 - y: 650)
+        if (engine.rand01() < 0.65f) {
+            float px = xmin + (xmax - xmin) * (0.15f + 0.7f * engine.rand01());
+            PlannedItem pipe = {
+                TAG_MARIO_PIPE, px, 650.0f, 0,
+                (float)engine.randChoice({40, 55, 75}), 0, false
             };
-            chadd(pine, 80.0f);
+            chadd(pipe, 200.0f);
+        }
+
+        // 5. Floating Blocks: [?] Question Mark & Brick Blocks
+        if (engine.rand01() < 0.75f) {
+            float bx = xmin + (xmax - xmin) * (0.2f + 0.6f * engine.rand01());
+            float by = engine.normRand(360.0f, 440.0f);
+            int blockCount = engine.randChoice({1, 3, 4});
+            PlannedItem blocks = {
+                TAG_MARIO_BLOCKS, bx, by, 0, (float)blockCount, 0, false
+            };
+            chadd(blocks, 220.0f);
+        }
+
+        // 6. Mushroom Platforms
+        if (engine.rand01() < 0.35f) {
+            float mx = xmin + (xmax - xmin) * (0.2f + 0.6f * engine.rand01());
+            PlannedItem mush = {
+                TAG_MARIO_MUSHROOM, mx, 650.0f, 0, engine.normRand(120.0f, 170.0f), 0, false
+            };
+            chadd(mush, 300.0f);
         }
     }
 }
@@ -239,18 +257,30 @@ void drawPlannedItem(const PlannedItem& it) {
             engine.boat01(it.x, it.y, it.arg1, it.arg2 > 0.5f);
             break;
 
-        // Mode 1: Jingyeong
-        case TAG_KR_GRANITE:
-            krEngine.granitePeak(it.x, it.y, it.seed, it.arg1, it.arg2);
+        // Mode 1: Super Mario World
+        case TAG_MARIO_CLOUD:
+            marioEngine.drawCloud(it.x, it.y, (int)it.arg1);
             break;
-        case TAG_KR_HILL:
-            krEngine.earthenHill(it.x, it.y, it.seed, it.arg1, it.arg2);
+        case TAG_MARIO_HILL_BG:
+            marioEngine.drawMarioHill(it.x, it.y, it.arg1, it.arg2, true);
             break;
-        case TAG_KR_PAVILION:
-            krEngine.koreanPavilion(it.x, it.y);
+        case TAG_MARIO_HILL_FG:
+            marioEngine.drawMarioHill(it.x, it.y, it.arg1, it.arg2, true);
             break;
-        case TAG_KR_PINE:
-            krEngine.koreanPine(it.x, it.y, it.arg1, it.arg2);
+        case TAG_MARIO_PIPE:
+            marioEngine.drawPipe(it.x, it.y, (int)it.arg1);
+            break;
+        case TAG_MARIO_BLOCKS: {
+            int cnt = (int)it.arg1;
+            for (int b = 0; b < cnt; b++) {
+                float ox = (b - cnt * 0.5f) * 60.0f;
+                bool isQ = (b % 2 == 1 || cnt == 1);
+                marioEngine.drawBlock(it.x + ox, it.y, isQ);
+            }
+            break;
+        }
+        case TAG_MARIO_MUSHROOM:
+            marioEngine.drawMushroomPlatform(it.x, it.y, it.arg1);
             break;
     }
 }
@@ -266,37 +296,46 @@ void renderWindow(Canvas565* target, float camX, int sliceScreenX, int sliceScre
         plannedMaxX += 512.0f;
     }
 
-    // Clear slice with seamless parchment texture
-    for (int y = 0; y < target->height; y++) {
-        const uint16_t* tileRow = &target->bgTile[(y & 63) * 64];
-        uint16_t* dstRow = &target->buf[y * target->width];
-        for (int x = sliceScreenX; x < sliceScreenX + sliceScreenW; x++) {
-            dstRow[x] = tileRow[(x + globalPxScroll) & 63];
+    if (currentStyle == STYLE_SHAN_SHUI) {
+        // Clear slice with seamless parchment paper texture
+        for (int y = 0; y < target->height; y++) {
+            const uint16_t* tileRow = &target->bgTile[(y & 63) * 64];
+            uint16_t* dstRow = &target->buf[y * target->width];
+            for (int x = sliceScreenX; x < sliceScreenX + sliceScreenW; x++) {
+                dstRow[x] = tileRow[(x + globalPxScroll) & 63];
+            }
+        }
+    } else {
+        // Clear slice with crisp 16-bit Super Mario Cyan Sky (#5C94FC)
+        uint16_t skyColor = Canvas565::to565(92, 148, 252);
+        for (int y = 0; y < target->height; y++) {
+            uint16_t* dstRow = &target->buf[y * target->width];
+            for (int x = sliceScreenX; x < sliceScreenX + sliceScreenW; x++) {
+                dstRow[x] = skyColor;
+            }
         }
     }
 
     std::vector<const PlannedItem*> visible;
     visible.reserve(64);
     for (const auto& it : items) {
-        float margin = (it.tag == TAG_DISTMOUNT) ? 1300.0f : 450.0f;
+        float margin = (it.tag == TAG_DISTMOUNT || it.tag == TAG_MARIO_HILL_BG) ? 1300.0f : 450.0f;
         if (it.x + margin >= camX && it.x - margin <= camX + viewWorldW) {
             visible.push_back(&it);
         }
     }
 
     std::sort(visible.begin(), visible.end(), [](const PlannedItem* a, const PlannedItem* b) {
-        float ya = (a->tag == TAG_WATER) ? (a->y - 10000.0f) :
-                   (a->tag == TAG_DISTMOUNT) ? (a->y - 5000.0f) :
-                   (a->tag == TAG_KR_GRANITE) ? (a->y - 3000.0f) : a->y;
-        float yb = (b->tag == TAG_WATER) ? (b->y - 10000.0f) :
-                   (b->tag == TAG_DISTMOUNT) ? (b->y - 5000.0f) :
-                   (b->tag == TAG_KR_GRANITE) ? (b->y - 3000.0f) : b->y;
+        float ya = (a->tag == TAG_WATER || a->tag == TAG_MARIO_CLOUD) ? -10000.0f :
+                   (a->tag == TAG_DISTMOUNT || a->tag == TAG_MARIO_HILL_BG) ? -5000.0f : a->y;
+        float yb = (b->tag == TAG_WATER || b->tag == TAG_MARIO_CLOUD) ? -10000.0f :
+                   (b->tag == TAG_DISTMOUNT || b->tag == TAG_MARIO_HILL_BG) ? -5000.0f : b->y;
         return ya < yb;
     });
 
     uint64_t savedPrng = engine.prng_s;
     engine.canvas = target;
-    krEngine.canvas = target;
+    marioEngine.canvas = target;
 
     for (const auto* it : visible) {
         uint32_t itemHash = (uint32_t)(it->x * 13.37f + it->y * 7.13f + it->seed * 997.0f) ^ ((uint32_t)it->tag * 0x9e3779b9U);
@@ -309,10 +348,15 @@ void renderWindow(Canvas565* target, float camX, int sliceScreenX, int sliceScre
         vTaskDelay(1);
     }
 
+    // Mario Mode: Stamp the iconic checkered soil & green grass ground floor!
+    if (currentStyle == STYLE_SUPER_MARIO) {
+        marioEngine.drawGround(sliceScreenX, sliceScreenW);
+    }
+
     engine.prng_s = savedPrng;
 
     items.erase(std::remove_if(items.begin(), items.end(), [camX](const PlannedItem& it) {
-        float margin = (it.tag == TAG_DISTMOUNT) ? 1400.0f : 550.0f;
+        float margin = (it.tag == TAG_DISTMOUNT || it.tag == TAG_MARIO_HILL_BG) ? 1400.0f : 550.0f;
         return (it.x + margin) < camX;
     }), items.end());
 }
@@ -370,32 +414,26 @@ void resetLandscape(ArtStyle newStyle) {
     tileRenderBusy = true;
 }
 
-// Fixed smooth scroll speed without speed-cycling UI clutter
-const float scrollSpeedPx = 1.0f;
+// 1.5px per frame gives a brisk, authentic Mario sidescroll feel!
+const float scrollSpeedPx = 1.5f;
 
-// Hardware BOOT Button (GPIO 0) handling:
-// - Short press (< 800ms): Toggle Style (Chinese Shan-Shui <-> Korean Jingyeong)
-// - Long press (>= 800ms): Re-seed current landscape with new random seed
 bool lastBtnState = HIGH;
 uint32_t btnPressTime = 0;
 
 void checkButtons() {
     bool currentBtn = digitalRead(PIN_BOOT_BTN);
     
-    // Falling edge: button pressed
     if (lastBtnState == HIGH && currentBtn == LOW) {
         btnPressTime = millis();
-    }
-    // Rising edge: button released
-    else if (lastBtnState == LOW && currentBtn == HIGH) {
+    } else if (lastBtnState == LOW && currentBtn == HIGH) {
         uint32_t duration = millis() - btnPressTime;
-        if (duration >= 50) { // Debounce threshold
+        if (duration >= 50) {
             if (duration >= 800) {
-                // Long press: Re-seed current style
+                // Long press: Re-seed current landscape
                 resetLandscape(currentStyle);
             } else {
-                // Short click: Switch Art Style
-                resetLandscape(currentStyle == STYLE_SHAN_SHUI ? STYLE_JINGYEONG : STYLE_SHAN_SHUI);
+                // Short click: Switch Art Style (Shan-Shui <-> Super Mario World)
+                resetLandscape(currentStyle == STYLE_SHAN_SHUI ? STYLE_SUPER_MARIO : STYLE_SHAN_SHUI);
             }
         }
     }
@@ -403,7 +441,6 @@ void checkButtons() {
 }
 
 void setup() {
-    // Configure BOOT button as input with internal pullup
     pinMode(PIN_BOOT_BTN, INPUT_PULLUP);
 
     gfx->begin();
@@ -414,8 +451,8 @@ void setup() {
 
     gfx->setTextColor(0x3186);
     gfx->setTextSize(2);
-    gfx->setCursor(55, 110);
-    gfx->println("Shan-Shui & Jingyeong");
+    gfx->setCursor(45, 110);
+    gfx->println("Shan-Shui & Mario");
 
     items.reserve(128);
 
@@ -468,7 +505,5 @@ void loop() {
     }
 
     composeFrame(localPx);
-
-    // Direct, ultra-clean 60fps DMA push without ANY UI banner flicker!
     gfx->draw16bitRGBBitmap(0, 0, frameBuf, SCREEN_W, SCREEN_H);
 }
